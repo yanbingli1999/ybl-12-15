@@ -1,4 +1,5 @@
 import type { Ship, Cabin, Upgrade } from '../types';
+import { createDefaultShipCargo } from './cargo';
 
 export const createDefaultCabins = (): Cabin[] => [
   {
@@ -72,6 +73,7 @@ export const createDefaultShip = (): Ship => ({
   evasion: 0.1,
   critRate: 0.1,
   cabins: createDefaultCabins(),
+  cargo: createDefaultShipCargo(),
 });
 
 export const createDefaultUpgrades = (): Upgrade[] => [
@@ -211,5 +213,16 @@ export const createDefaultUpgrades = (): Upgrade[] => [
     currentLevel: 0,
     description: '扫描舱等级+1，削弱效果增强',
     cabinType: 'scanner',
+  },
+  {
+    id: 'upgrade_cargo',
+    name: '货舱扩容',
+    type: 'cargo',
+    cost: 20,
+    costMultiplier: 1.6,
+    effect: 2,
+    maxLevel: 8,
+    currentLevel: 0,
+    description: '增加货舱容量 +2',
   },
 ];

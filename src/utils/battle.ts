@@ -1,7 +1,8 @@
 import type { 
   Ship, Enemy, Die, CabinType, DamageResult, BattleLogEntry,
-  GameConfig, AllocationResult, EnemyIntent
+  GameConfig, AllocationResult, EnemyIntent, ShipCargo
 } from '../types';
+import { calculateCargoWeight, calculateWeightPenalty, calculateCargoRewardMultiplier, calculateCargoUsedCapacity } from '../data/cargo';
 
 export function calculateDamage(
   baseDamage: number,
@@ -472,13 +473,73 @@ export function checkBattleEnd(player: Ship, enemy: Enemy): 'ongoing' | 'victory
   return 'ongoing';
 }
 
-export function calculateReward(result: 'victory' | 'defeat' | 'fled', turns: number, difficulty: number): number {
+export function calculateReward(
+  result: 'victory' | 'defeat' | 'fled', 
+  turns: number, 
+  difficulty: number,
+  cargo?: ShipCargo
+): number {
   if (result === 'defeat') return 0;
   if (result === 'fled') return 0;
   
   const baseReward = 10 * difficulty;
   const turnBonus = Math.max(0, 10 - turns) * difficulty;
-  return baseReward + turnBonus;
+  let totalReward = baseReward + turnBonus;
+  
+  if (cargo) {
+    const rewardMultiplier = calculateCargoRewardMultiplier(cargo);
+    totalReward = Math.floor(totalReward * rewardMultiplier);
+    
+    const usedCapacity = calculateCargoUsedCapacity(cargo);
+    const freeCapacity = cargo.capacity - usedCapacity;
+    const capacityBonus = Math.floor(freeCapacity * difficulty * 0.5);
+    totalReward += capacityBonus;
+  }
+  
+  return totalReward;
+}
+
+export function applyCargoEffectsToShip(ship: Ship, cargo: ShipCargo): Ship {
+  const modifiedShip = { ...ship };
+  const totalWeight = calculateCargoWeight(cargo);
+  const { evasionPenalty, energyPenalty } = calculateWeightPenalty(totalWeight);
+  
+  modifiedShip.evasion = Math.max(0, modifiedShip.evasion - evasionPenalty);
+  modifiedShip.energy = Math.max(0, modifiedShip.energy - energyPenalty);
+  
+  for (const slot of cargo.slots) {
+    const effect = slot.cargo.effect;
+    if (effect.type === 'passive') {
+      if (effect.energyBonus) {
+        modifiedShip.energy = Math.min(modifiedShip.maxEnergy, modifiedShip.energy + effect.energyBonus * slot.quantity);
+      }
+    }
+  }
+  
+  return modifiedShip;
+}
+
+export function applyCargoEffectsToEnemy(enemy: Enemy, cargo: ShipCargo): Enemy {
+  const modifiedEnemy = { ...enemy };
+  
+  for (const slot of cargo.slots) {
+    const effect = slot.cargo.effect;
+    if (effect.type === 'passive' && effect.scanBonus) {
+      modifiedEnemy.evasion = Math.max(0, modifiedEnemy.evasion - effect.scanBonus * slot.quantity);
+    }
+  }
+  
+  return modifiedEnemy;
+}
+
+export function getActiveCargoDamageBonus(cargo: ShipCargo, cargoType: string): number {
+  let bonus = 0;
+  for (const slot of cargo.slots) {
+    if (slot.cargo.type === cargoType && slot.cargo.effect.type === 'active' && slot.cargo.effect.damageBonus) {
+      bonus += slot.cargo.effect.damageBonus * slot.quantity;
+    }
+  }
+  return bonus;
 }
 
 export function getIntentIcon(intent: EnemyIntent): string {

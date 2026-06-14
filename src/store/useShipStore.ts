@@ -1,12 +1,15 @@
 import { create } from 'zustand';
-import type { Ship, Upgrade, GameStats } from '../types';
+import type { Ship, Upgrade, GameStats, Cargo, CargoSlot, ShipCargo } from '../types';
 import { createDefaultShip, createDefaultUpgrades } from '../data/defaultShip';
 import { defaultStats } from '../utils/storage';
+import { createDefaultShipCargo, calculateCargoWeight, calculateCargoUsedCapacity } from '../data/cargo';
 import { 
   loadShip, saveShip, 
   loadUpgrades, saveUpgrades,
   loadRewardPoints, saveRewardPoints,
   loadStats, updateStats,
+  loadCargoInventory, saveCargoInventory,
+  loadShipCargo, saveShipCargo,
 } from '../utils/storage';
 
 interface ShipState {
@@ -14,6 +17,7 @@ interface ShipState {
   upgrades: Upgrade[];
   rewardPoints: number;
   stats: GameStats;
+  cargoInventory: CargoSlot[];
   
   loadSavedData: () => void;
   updateShip: (ship: Partial<Ship>) => void;
@@ -23,6 +27,17 @@ interface ShipState {
   spendRewardPoints: (points: number) => boolean;
   applyUpgradeEffects: () => void;
   resetShip: () => void;
+  
+  addCargoToShip: (cargo: Cargo, quantity?: number) => boolean;
+  removeCargoFromShip: (cargoId: string, quantity?: number) => boolean;
+  clearShipCargo: () => void;
+  
+  addCargoToInventory: (cargo: Cargo, quantity?: number) => void;
+  removeCargoFromInventory: (cargoId: string, quantity?: number) => boolean;
+  
+  getShipCargoWeight: () => number;
+  getShipCargoUsedCapacity: () => number;
+  getShipCargoFreeCapacity: () => number;
 }
 
 export const useShipStore = create<ShipState>((set, get) => ({
@@ -30,14 +45,20 @@ export const useShipStore = create<ShipState>((set, get) => ({
   upgrades: createDefaultUpgrades(),
   rewardPoints: 0,
   stats: defaultStats,
+  cargoInventory: [],
   
   loadSavedData: () => {
     const ship = loadShip();
     const upgrades = loadUpgrades();
     const rewardPoints = loadRewardPoints();
     const stats = loadStats();
+    const cargoInventory = loadCargoInventory();
     
-    set({ ship, upgrades, rewardPoints, stats });
+    if (!ship.cargo) {
+      ship.cargo = createDefaultShipCargo();
+    }
+    
+    set({ ship, upgrades, rewardPoints, stats, cargoInventory });
   },
   
   updateShip: (updates) => {
@@ -116,6 +137,7 @@ export const useShipStore = create<ShipState>((set, get) => ({
     const evasionUpgrade = upgrades.find(u => u.id === 'upgrade_evasion');
     const critUpgrade = upgrades.find(u => u.id === 'upgrade_crit');
     const energyUpgrade = upgrades.find(u => u.id === 'upgrade_energy');
+    const cargoUpgrade = upgrades.find(u => u.id === 'upgrade_cargo');
     
     newShip.maxHp = baseShip.maxHp + (hpUpgrade?.currentLevel || 0) * hpUpgrade!.effect;
     newShip.maxShield = baseShip.maxShield + (shieldUpgrade?.currentLevel || 0) * shieldUpgrade!.effect;
@@ -124,6 +146,12 @@ export const useShipStore = create<ShipState>((set, get) => ({
     newShip.evasion = baseShip.evasion + (evasionUpgrade?.currentLevel || 0) * evasionUpgrade!.effect;
     newShip.critRate = baseShip.critRate + (critUpgrade?.currentLevel || 0) * critUpgrade!.effect;
     newShip.maxEnergy = baseShip.maxEnergy + (energyUpgrade?.currentLevel || 0) * energyUpgrade!.effect;
+    
+    const baseCargo = createDefaultShipCargo();
+    newShip.cargo = {
+      capacity: baseCargo.capacity + (cargoUpgrade?.currentLevel || 0) * (cargoUpgrade?.effect || 2),
+      slots: newShip.cargo?.slots || [],
+    };
     
     newShip.hp = Math.min(newShip.hp, newShip.maxHp);
     newShip.shield = Math.min(newShip.shield, newShip.maxShield);
@@ -149,15 +177,183 @@ export const useShipStore = create<ShipState>((set, get) => ({
   resetShip: () => {
     const newShip = createDefaultShip();
     const newUpgrades = createDefaultUpgrades();
+    const newCargoInventory = [];
     
     set({
       ship: newShip,
       upgrades: newUpgrades,
       rewardPoints: 0,
+      cargoInventory: newCargoInventory,
     });
     
     saveShip(newShip);
     saveUpgrades(newUpgrades);
     saveRewardPoints(0);
+    saveCargoInventory(newCargoInventory);
+  },
+  
+  addCargoToShip: (cargo, quantity = 1) => {
+    const { ship, cargoInventory } = get();
+    const shipCargo = ship.cargo || createDefaultShipCargo();
+    
+    const neededCapacity = cargo.capacity * quantity;
+    const usedCapacity = calculateCargoUsedCapacity(shipCargo);
+    const freeCapacity = shipCargo.capacity - usedCapacity;
+    
+    if (neededCapacity > freeCapacity) {
+      return false;
+    }
+    
+    const invSlot = cargoInventory.find(s => s.cargo.id === cargo.id);
+    if (!invSlot || invSlot.quantity < quantity) {
+      return false;
+    }
+    
+    const existingSlot = shipCargo.slots.find(s => s.cargo.id === cargo.id);
+    let newSlots: CargoSlot[];
+    
+    if (existingSlot) {
+      newSlots = shipCargo.slots.map(s =>
+        s.cargo.id === cargo.id ? { ...s, quantity: s.quantity + quantity } : s
+      );
+    } else {
+      newSlots = [...shipCargo.slots, { cargo, quantity }];
+    }
+    
+    const newShipCargo: ShipCargo = {
+      capacity: shipCargo.capacity,
+      slots: newSlots,
+    };
+    
+    const newInventory = cargoInventory.map(s =>
+      s.cargo.id === cargo.id ? { ...s, quantity: s.quantity - quantity } : s
+    ).filter(s => s.quantity > 0);
+    
+    const newShip = { ...ship, cargo: newShipCargo };
+    set({ ship: newShip, cargoInventory: newInventory });
+    saveShip(newShip);
+    saveCargoInventory(newInventory);
+    
+    return true;
+  },
+  
+  removeCargoFromShip: (cargoId, quantity = 1) => {
+    const { ship, cargoInventory } = get();
+    const shipCargo = ship.cargo || createDefaultShipCargo();
+    
+    const shipSlot = shipCargo.slots.find(s => s.cargo.id === cargoId);
+    if (!shipSlot || shipSlot.quantity < quantity) {
+      return false;
+    }
+    
+    const cargo = shipSlot.cargo;
+    
+    const newShipSlots = shipCargo.slots.map(s =>
+      s.cargo.id === cargoId ? { ...s, quantity: s.quantity - quantity } : s
+    ).filter(s => s.quantity > 0);
+    
+    const newShipCargo: ShipCargo = {
+      capacity: shipCargo.capacity,
+      slots: newShipSlots,
+    };
+    
+    const existingInvSlot = cargoInventory.find(s => s.cargo.id === cargoId);
+    let newInventory: CargoSlot[];
+    
+    if (existingInvSlot) {
+      newInventory = cargoInventory.map(s =>
+        s.cargo.id === cargoId ? { ...s, quantity: s.quantity + quantity } : s
+      );
+    } else {
+      newInventory = [...cargoInventory, { cargo, quantity }];
+    }
+    
+    const newShip = { ...ship, cargo: newShipCargo };
+    set({ ship: newShip, cargoInventory: newInventory });
+    saveShip(newShip);
+    saveCargoInventory(newInventory);
+    
+    return true;
+  },
+  
+  clearShipCargo: () => {
+    const { ship, cargoInventory } = get();
+    const shipCargo = ship.cargo || createDefaultShipCargo();
+    
+    let newInventory = [...cargoInventory];
+    
+    for (const slot of shipCargo.slots) {
+      const existingInvSlot = newInventory.find(s => s.cargo.id === slot.cargo.id);
+      if (existingInvSlot) {
+        newInventory = newInventory.map(s =>
+          s.cargo.id === slot.cargo.id ? { ...s, quantity: s.quantity + slot.quantity } : s
+        );
+      } else {
+        newInventory.push({ cargo: slot.cargo, quantity: slot.quantity });
+      }
+    }
+    
+    const newShipCargo: ShipCargo = {
+      capacity: shipCargo.capacity,
+      slots: [],
+    };
+    
+    const newShip = { ...ship, cargo: newShipCargo };
+    set({ ship: newShip, cargoInventory: newInventory });
+    saveShip(newShip);
+    saveCargoInventory(newInventory);
+  },
+  
+  addCargoToInventory: (cargo, quantity = 1) => {
+    const { cargoInventory } = get();
+    
+    const existingSlot = cargoInventory.find(s => s.cargo.id === cargo.id);
+    let newInventory: CargoSlot[];
+    
+    if (existingSlot) {
+      newInventory = cargoInventory.map(s =>
+        s.cargo.id === cargo.id ? { ...s, quantity: s.quantity + quantity } : s
+      );
+    } else {
+      newInventory = [...cargoInventory, { cargo, quantity }];
+    }
+    
+    set({ cargoInventory: newInventory });
+    saveCargoInventory(newInventory);
+  },
+  
+  removeCargoFromInventory: (cargoId, quantity = 1) => {
+    const { cargoInventory } = get();
+    
+    const slot = cargoInventory.find(s => s.cargo.id === cargoId);
+    if (!slot || slot.quantity < quantity) {
+      return false;
+    }
+    
+    const newInventory = cargoInventory.map(s =>
+      s.cargo.id === cargoId ? { ...s, quantity: s.quantity - quantity } : s
+    ).filter(s => s.quantity > 0);
+    
+    set({ cargoInventory: newInventory });
+    saveCargoInventory(newInventory);
+    
+    return true;
+  },
+  
+  getShipCargoWeight: () => {
+    const { ship } = get();
+    return calculateCargoWeight(ship.cargo || createDefaultShipCargo());
+  },
+  
+  getShipCargoUsedCapacity: () => {
+    const { ship } = get();
+    return calculateCargoUsedCapacity(ship.cargo || createDefaultShipCargo());
+  },
+  
+  getShipCargoFreeCapacity: () => {
+    const { ship } = get();
+    const shipCargo = ship.cargo || createDefaultShipCargo();
+    const used = calculateCargoUsedCapacity(shipCargo);
+    return shipCargo.capacity - used;
   },
 }));

@@ -1,5 +1,41 @@
 export type CabinType = 'engine' | 'shield' | 'weapon' | 'repair' | 'scanner';
 
+export type CargoType = 'ammo' | 'battery' | 'coolant' | 'probe' | 'loot';
+
+export interface Cargo {
+  id: string;
+  type: CargoType;
+  name: string;
+  description: string;
+  icon: string;
+  capacity: number;
+  weight: number;
+  effect: CargoEffect;
+  rarity: 'common' | 'uncommon' | 'rare';
+}
+
+export interface CargoEffect {
+  type: 'passive' | 'active' | 'reward';
+  rewardMultiplier?: number;
+  evasionPenalty?: number;
+  energyBonus?: number;
+  damageBonus?: number;
+  shieldBonus?: number;
+  cooldownReduction?: number;
+  scanBonus?: number;
+  oneTimeUse?: boolean;
+}
+
+export interface CargoSlot {
+  cargo: Cargo;
+  quantity: number;
+}
+
+export interface ShipCargo {
+  capacity: number;
+  slots: CargoSlot[];
+}
+
 export interface Die {
   id: string;
   value: number;
@@ -34,6 +70,7 @@ export interface Ship {
   evasion: number;
   critRate: number;
   cabins: Cabin[];
+  cargo: ShipCargo;
 }
 
 export type EnemyIntentType = 'attack' | 'defend' | 'charge' | 'special' | 'repair';
@@ -99,6 +136,9 @@ export interface BattleState {
   startTime: number;
   endTime?: number;
   rewardPoints: number;
+  activeCargo: ShipCargo;
+  cargoWeightPenalty: number;
+  cargoRewardMultiplier: number;
 }
 
 export interface GameConfig {
@@ -118,7 +158,7 @@ export interface GameConfig {
 export interface Upgrade {
   id: string;
   name: string;
-  type: 'hp' | 'shield' | 'attack' | 'defense' | 'evasion' | 'crit' | 'energy' | 'cabin';
+  type: 'hp' | 'shield' | 'attack' | 'defense' | 'evasion' | 'crit' | 'energy' | 'cabin' | 'cargo';
   cost: number;
   costMultiplier: number;
   effect: number;
@@ -174,6 +214,7 @@ export interface GameSaveData {
   battleHistory: BattleRecord[];
   stats: GameStats;
   rewardPoints: number;
+  cargoInventory: CargoSlot[];
 }
 
 export interface DiceFace {

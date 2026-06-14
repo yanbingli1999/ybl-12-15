@@ -12,7 +12,12 @@ import {
   executeEnemyIntent, 
   checkBattleEnd,
   calculateReward,
+  applyCargoEffectsToShip,
+  applyCargoEffectsToEnemy,
+  getActiveCargoDamageBonus,
 } from '../utils/battle';
+import { createDefaultShipCargo, calculateCargoWeight, calculateWeightPenalty, calculateCargoRewardMultiplier } from '../data/cargo';
+import type { ShipCargo } from '../types';
 import { addBattleRecord, loadBattleHistory, updateStats } from '../utils/storage';
 import { unassignAllDice } from '../utils/dice';
 
@@ -38,6 +43,8 @@ interface GameState {
   setReplaySpeed: (speed: number) => void;
   setDifficulty: (difficulty: number) => void;
   resetBattle: () => void;
+  
+  useCargoItem: (cargoId: string) => boolean;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -55,13 +62,57 @@ export const useGameStore = create<GameState>((set, get) => ({
     const config = useConfigStore.getState().config;
     
     shipStore.applyUpgradeEffects();
-    const player = { ...shipStore.ship };
+    let player = { ...shipStore.ship };
     player.hp = player.maxHp;
     player.shield = player.maxShield;
     player.energy = player.maxEnergy;
     player.cabins = player.cabins.map(c => ({ ...c, damaged: false, cooldown: 0 }));
     
-    const enemy = getRandomEnemy(currentDifficulty);
+    const activeCargo: ShipCargo = JSON.parse(JSON.stringify(player.cargo || createDefaultShipCargo()));
+    
+    player = applyCargoEffectsToShip(player, activeCargo);
+    
+    let enemy = getRandomEnemy(currentDifficulty);
+    enemy = applyCargoEffectsToEnemy(enemy, activeCargo);
+    
+    const cargoWeight = calculateCargoWeight(activeCargo);
+    const { evasionPenalty } = calculateWeightPenalty(cargoWeight);
+    const cargoRewardMultiplier = calculateCargoRewardMultiplier(activeCargo);
+    
+    const cargoLogs: BattleLogEntry[] = [];
+    if (evasionPenalty > 0) {
+      cargoLogs.push({
+        id: `log_${Date.now()}_weight`,
+        turn: 1,
+        type: 'effect',
+        source: 'system',
+        message: `载荷重量过重，闪避率 -${(evasionPenalty * 100).toFixed(0)}%`,
+        timestamp: Date.now(),
+      });
+    }
+    
+    for (const slot of activeCargo.slots) {
+      if (slot.cargo.effect.type === 'passive' && slot.cargo.effect.energyBonus) {
+        cargoLogs.push({
+          id: `log_${Date.now()}_${slot.cargo.id}`,
+          turn: 1,
+          type: 'effect',
+          source: 'player',
+          message: `${slot.cargo.name} 启动：能量 +${slot.cargo.effect.energyBonus * slot.quantity}`,
+          timestamp: Date.now(),
+        });
+      }
+      if (slot.cargo.effect.type === 'passive' && slot.cargo.effect.scanBonus) {
+        cargoLogs.push({
+          id: `log_${Date.now()}_${slot.cargo.id}_scan`,
+          turn: 1,
+          type: 'effect',
+          source: 'player',
+          message: `${slot.cargo.name} 启动：敌方闪避 -${(slot.cargo.effect.scanBonus * slot.quantity * 100).toFixed(0)}%`,
+          timestamp: Date.now(),
+        });
+      }
+    }
     
     const battleState: BattleState = {
       id: `battle_${Date.now()}`,
@@ -69,17 +120,23 @@ export const useGameStore = create<GameState>((set, get) => ({
       phase: 'player',
       player,
       enemy,
-      logs: [{
-        id: `log_${Date.now()}_start`,
-        turn: 1,
-        type: 'system',
-        source: 'system',
-        message: `战斗开始！遭遇 ${enemy.name}！`,
-        timestamp: Date.now(),
-      }],
+      logs: [
+        {
+          id: `log_${Date.now()}_start`,
+          turn: 1,
+          type: 'system',
+          source: 'system',
+          message: `战斗开始！遭遇 ${enemy.name}！`,
+          timestamp: Date.now(),
+        },
+        ...cargoLogs,
+      ],
       result: 'ongoing',
       startTime: Date.now(),
       rewardPoints: 0,
+      activeCargo,
+      cargoWeightPenalty: evasionPenalty,
+      cargoRewardMultiplier,
     };
     
     const replayData: ReplayData = {
@@ -311,10 +368,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!battleState) return;
     
     const shipStore = useShipStore.getState();
-    const config = useConfigStore.getState().config;
     
     const reward = result === 'victory' 
-      ? calculateReward(result, battleState.turn, get().currentDifficulty)
+      ? calculateReward(result, battleState.turn, get().currentDifficulty, battleState.activeCargo)
       : 0;
     
     const newState: BattleState = {
@@ -455,5 +511,84 @@ export const useGameStore = create<GameState>((set, get) => ({
       isReplaying: false,
     });
     useDiceStore.getState().resetDice();
+  },
+  
+  useCargoItem: (cargoId) => {
+    const { battleState } = get();
+    if (!battleState || battleState.phase !== 'player' || battleState.result !== 'ongoing') {
+      return false;
+    }
+    
+    const cargoSlot = battleState.activeCargo.slots.find(s => s.cargo.id === cargoId);
+    if (!cargoSlot || cargoSlot.quantity <= 0) {
+      return false;
+    }
+    
+    const cargo = cargoSlot.cargo;
+    if (cargo.effect.type !== 'active') {
+      return false;
+    }
+    
+    let newPlayer = { ...battleState.player };
+    let newEnemy = { ...battleState.enemy };
+    const newLogs: BattleLogEntry[] = [];
+    
+    if (cargo.effect.damageBonus) {
+      newLogs.push({
+        id: `log_${Date.now()}_use_${cargoId}`,
+        turn: battleState.turn,
+        type: 'effect',
+        source: 'player',
+        message: `使用 ${cargo.name}：下次攻击伤害 +${(cargo.effect.damageBonus * 100).toFixed(0)}%`,
+        timestamp: Date.now(),
+      });
+      newPlayer.attack = Math.floor(newPlayer.attack * (1 + cargo.effect.damageBonus));
+    }
+    
+    if (cargo.effect.cooldownReduction) {
+      const damagedCabins = newPlayer.cabins.filter(c => c.damaged);
+      if (damagedCabins.length > 0) {
+        const repairedCabin = damagedCabins[0];
+        newPlayer.cabins = newPlayer.cabins.map(c =>
+          c.id === repairedCabin.id ? { ...c, damaged: false, cooldown: 0 } : c
+        );
+        newLogs.push({
+          id: `log_${Date.now()}_use_${cargoId}_repair`,
+          turn: battleState.turn,
+          type: 'effect',
+          source: 'player',
+          message: `使用 ${cargo.name}：${repairedCabin.name} 已修复！`,
+          timestamp: Date.now(),
+        });
+      } else {
+        newLogs.push({
+          id: `log_${Date.now()}_use_${cargoId}_fail`,
+          turn: battleState.turn,
+          type: 'effect',
+          source: 'system',
+          message: `使用 ${cargo.name}：没有需要修复的舱室`,
+          timestamp: Date.now(),
+        });
+      }
+    }
+    
+    const newActiveCargo: ShipCargo = {
+      ...battleState.activeCargo,
+      slots: battleState.activeCargo.slots.map(s =>
+        s.cargo.id === cargoId ? { ...s, quantity: s.quantity - 1 } : s
+      ).filter(s => s.quantity > 0),
+    };
+    
+    set({
+      battleState: {
+        ...battleState,
+        player: newPlayer,
+        enemy: newEnemy,
+        activeCargo: newActiveCargo,
+        logs: [...battleState.logs, ...newLogs],
+      },
+    });
+    
+    return true;
   },
 }));

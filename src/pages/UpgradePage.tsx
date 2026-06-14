@@ -1,5 +1,5 @@
 import React from 'react';
-import { Coins, ArrowUp, Zap, Heart, Shield, Target, Crosshair, Navigation, Wrench } from 'lucide-react';
+import { Coins, ArrowUp, Zap, Heart, Shield, Target, Crosshair, Navigation, Wrench, Package } from 'lucide-react';
 import { useShipStore } from '../store/useShipStore';
 import { ShipStatus } from '../components/Ship/ShipStatus';
 import type { CabinType } from '../types';
@@ -13,6 +13,7 @@ const upgradeIcons: Record<string, React.ReactNode> = {
   crit: <Crosshair className="w-5 h-5" />,
   energy: <Zap className="w-5 h-5" />,
   cabin: <Wrench className="w-5 h-5" />,
+  cargo: <Package className="w-5 h-5" />,
 };
 
 const upgradeColors: Record<string, string> = {
@@ -24,6 +25,7 @@ const upgradeColors: Record<string, string> = {
   crit: 'text-neon-yellow border-neon-yellow',
   energy: 'text-neon-yellow border-neon-yellow',
   cabin: 'text-neon-blue border-neon-blue',
+  cargo: 'text-neon-orange border-neon-orange',
 };
 
 const cabinNames: Record<CabinType, string> = {

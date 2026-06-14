@@ -1,15 +1,17 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Swords, Wrench, History, Settings, Coins } from 'lucide-react';
+import { Swords, Wrench, History, Settings, Coins, Package } from 'lucide-react';
 import { useShipStore } from '../../store/useShipStore';
 
 export const NavBar: React.FC = () => {
   const location = useLocation();
-  const { rewardPoints, stats } = useShipStore();
+  const { rewardPoints, stats, getShipCargoUsedCapacity } = useShipStore();
+  const usedCapacity = getShipCargoUsedCapacity();
 
   const navItems = [
     { path: '/', icon: Swords, label: '战斗' },
     { path: '/upgrade', icon: Wrench, label: '改装' },
+    { path: '/cargo', icon: Package, label: '货舱' },
     { path: '/history', icon: History, label: '战报' },
     { path: '/config', icon: Settings, label: '设置' },
   ];

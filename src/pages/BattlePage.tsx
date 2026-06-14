@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Play, Flag, SkipForward, RotateCcw, Trophy, Skull } from 'lucide-react';
+import { Play, Flag, SkipForward, RotateCcw, Trophy, Skull, Package, Plus, Minus, Zap } from 'lucide-react';
 import { DiceArea } from '../components/Dice/DiceArea';
 import { CabinArea } from '../components/Cabin/CabinArea';
 import { ShipStatus } from '../components/Ship/ShipStatus';
@@ -11,6 +11,8 @@ import { useGameStore } from '../store/useGameStore';
 import { useDiceStore } from '../store/useDiceStore';
 import { useShipStore } from '../store/useShipStore';
 import { hasAnyDiceAssigned } from '../utils/dice';
+import { calculateCargoWeight, calculateCargoUsedCapacity, calculateWeightPenalty, calculateCargoRewardMultiplier } from '../data/cargo';
+import type { Cargo } from '../types';
 
 export const BattlePage: React.FC = () => {
   const { 
@@ -19,12 +21,23 @@ export const BattlePage: React.FC = () => {
     startBattle, 
     confirmTurn, 
     fleeBattle, 
+    endBattle,
     resetBattle,
     setDifficulty,
     isReplaying,
+    useCargoItem,
   } = useGameStore();
   const { dice } = useDiceStore();
-  const { rewardPoints, addRewardPoints } = useShipStore();
+  const { 
+    rewardPoints, 
+    ship, 
+    cargoInventory,
+    addCargoToShip,
+    removeCargoFromShip,
+    getShipCargoWeight,
+    getShipCargoUsedCapacity,
+    getShipCargoFreeCapacity,
+  } = useShipStore();
   const [showResultModal, setShowResultModal] = useState(false);
 
   useEffect(() => {
@@ -79,59 +92,201 @@ export const BattlePage: React.FC = () => {
   };
 
   if (!battleState) {
+    const shipCargo = ship.cargo || { capacity: 10, slots: [] };
+    const totalWeight = getShipCargoWeight();
+    const usedCapacity = getShipCargoUsedCapacity();
+    const freeCapacity = getShipCargoFreeCapacity();
+    const { evasionPenalty, energyPenalty } = calculateWeightPenalty(totalWeight);
+    const rewardMultiplier = calculateCargoRewardMultiplier(shipCargo);
+
+    const handleQuickAdd = (cargo: Cargo) => addCargoToShip(cargo, 1);
+    const handleQuickRemove = (cargoId: string) => removeCargoFromShip(cargoId, 1);
+
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="glass-panel neon-border p-8 rounded-xl max-w-md w-full text-center">
-          <div className="text-6xl mb-4">🚀</div>
-          <h2 className="text-2xl font-display font-bold text-neon-blue mb-4">
-            准备战斗
-          </h2>
-          <p className="text-gray-400 mb-6">
-            选择难度，开始你的太空冒险！
-          </p>
-          
-          <div className="mb-6">
-            <label className="block text-sm text-gray-400 mb-2">难度选择</label>
-            <div className="flex gap-2 justify-center">
-              {[1, 2, 3, 4, 5].map(diff => (
-                <button
-                  key={diff}
-                  onClick={() => setDifficulty(diff)}
-                  className={`
-                    w-12 h-12 rounded-lg font-display font-bold
-                    transition-all duration-200
-                    ${currentDifficulty === diff
-                      ? 'bg-neon-blue text-space-900'
-                      : 'bg-space-700 text-gray-400 hover:bg-space-600'}
-                  `}
-                >
-                  {diff}
-                </button>
-              ))}
+      <div className="space-y-6">
+        <div className="glass-panel neon-border p-6 rounded-xl">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+            <div>
+              <div className="text-4xl mb-2">🚀</div>
+              <h2 className="text-2xl font-display font-bold text-neon-blue">
+                准备战斗
+              </h2>
+              <p className="text-gray-400 text-sm">
+                选择难度并配置载荷，开始你的太空冒险！
+              </p>
             </div>
-            <p className="text-xs text-gray-500 mt-2">
-              当前: 难度 {currentDifficulty} - {
-                currentDifficulty <= 2 ? '新手' : 
-                currentDifficulty <= 3 ? '普通' : 
-                currentDifficulty <= 4 ? '困难' : '地狱'
-              }
-            </p>
-          </div>
-
-          <div className="mb-6 p-4 bg-space-900/50 rounded-lg">
-            <div className="text-sm text-gray-400">当前点数</div>
-            <div className="text-2xl font-display font-bold text-neon-yellow">
-              💰 {rewardPoints}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-space-800 px-4 py-2 rounded-lg">
+                <span className="text-sm text-gray-400">点数</span>
+                <span className="text-xl font-display font-bold text-neon-yellow">
+                  💰 {rewardPoints}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 bg-space-800 px-4 py-2 rounded-lg">
+                <Package className="w-5 h-5 text-neon-cyan" />
+                <span className="font-display font-bold text-neon-cyan">
+                  {usedCapacity}/{shipCargo.capacity}
+                </span>
+              </div>
             </div>
           </div>
 
-          <button
-            onClick={handleStartBattle}
-            className="btn-primary w-full flex items-center justify-center gap-2 text-lg"
-          >
-            <Play className="w-6 h-6" />
-            开始战斗
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">难度选择</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map(diff => (
+                  <button
+                    key={diff}
+                    onClick={() => setDifficulty(diff)}
+                    className={`
+                      w-12 h-12 rounded-lg font-display font-bold
+                      transition-all duration-200
+                      ${currentDifficulty === diff
+                        ? 'bg-neon-blue text-space-900'
+                        : 'bg-space-700 text-gray-400 hover:bg-space-600'}
+                    `}
+                  >
+                    {diff}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {currentDifficulty <= 2 ? '新手' : 
+                 currentDifficulty <= 3 ? '普通' : 
+                 currentDifficulty <= 4 ? '困难' : '地狱'}
+              </p>
+            </div>
+
+            <div className="bg-space-900/50 p-3 rounded-lg">
+              <div className="text-xs text-gray-400 mb-1">载荷影响</div>
+              <div className="flex items-center gap-4 text-sm">
+                <div>
+                  <span className="text-gray-500">闪避:</span>
+                  <span className={`ml-1 font-display ${evasionPenalty > 0 ? 'text-neon-red' : 'text-neon-green'}`}>
+                    {evasionPenalty > 0 ? `-${(evasionPenalty * 100).toFixed(0)}%` : '0%'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">能量:</span>
+                  <span className={`ml-1 font-display ${energyPenalty > 0 ? 'text-neon-red' : 'text-neon-green'}`}>
+                    {energyPenalty > 0 ? `-${energyPenalty}` : '0'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500">奖励:</span>
+                  <span className="ml-1 font-display text-neon-yellow">
+                    x{rewardMultiplier.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-end">
+              <button
+                onClick={handleStartBattle}
+                className="btn-primary w-full flex items-center justify-center gap-2 text-lg h-12"
+              >
+                <Play className="w-6 h-6" />
+                开始战斗
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h3 className="text-lg font-display font-bold text-white mb-3 flex items-center gap-2">
+              <Package className="w-5 h-5 text-neon-blue" />
+              已装载载荷 ({usedCapacity}/{shipCargo.capacity})
+            </h3>
+            {shipCargo.slots.length === 0 ? (
+              <div className="glass-panel p-6 rounded-xl text-center">
+                <Package className="w-10 h-10 text-gray-600 mx-auto mb-2" />
+                <p className="text-gray-500 text-sm">货舱为空</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {shipCargo.slots.map(slot => (
+                  <div
+                    key={slot.cargo.id}
+                    className="glass-panel p-3 rounded-xl flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{slot.cargo.icon}</span>
+                      <div>
+                        <div className="font-display font-bold text-white text-sm">
+                          {slot.cargo.name}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          容:{slot.cargo.capacity} 重:{slot.cargo.weight}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleQuickRemove(slot.cargo.id)}
+                        className="w-7 h-7 rounded bg-neon-red/20 text-neon-red border border-neon-red/50 hover:bg-neon-red/30 flex items-center justify-center"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="font-display font-bold text-white w-6 text-center">
+                        {slot.quantity}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-lg font-display font-bold text-white mb-3 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-neon-yellow" />
+              可用载荷
+            </h3>
+            <div className="space-y-2">
+              {cargoInventory.length === 0 ? (
+                <div className="glass-panel p-6 rounded-xl text-center">
+                  <p className="text-gray-500 text-sm">仓库为空</p>
+                </div>
+              ) : (
+                cargoInventory.map(slot => {
+                  const canAdd = slot.quantity > 0 && slot.cargo.capacity <= freeCapacity;
+                  return (
+                    <div
+                      key={slot.cargo.id}
+                      className="glass-panel p-3 rounded-xl flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">{slot.cargo.icon}</span>
+                        <div>
+                          <div className="font-display font-bold text-white text-sm">
+                            {slot.cargo.name}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            容:{slot.cargo.capacity} 重:{slot.cargo.weight} | 库存:{slot.quantity}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleQuickAdd(slot.cargo)}
+                        disabled={!canAdd}
+                        className={`
+                          w-7 h-7 rounded flex items-center justify-center
+                          ${canAdd
+                            ? 'bg-neon-green/20 text-neon-green border border-neon-green/50 hover:bg-neon-green/30'
+                            : 'bg-space-700 text-gray-600 border border-space-600 cursor-not-allowed'}
+                        `}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -195,6 +350,38 @@ export const BattlePage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-4">
           <DiceArea disabled={!isPlayerPhase || isReplaying} />
+          
+          {battleState.activeCargo && battleState.activeCargo.slots.filter(s => s.cargo.effect.type === 'active').length > 0 && (
+            <div className="glass-panel neon-border p-4 rounded-xl">
+              <h3 className="text-sm font-display font-bold text-neon-yellow mb-3 flex items-center gap-2">
+                <Zap className="w-4 h-4" />
+                可用道具
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {battleState.activeCargo.slots
+                  .filter(s => s.cargo.effect.type === 'active')
+                  .map(slot => (
+                    <button
+                      key={slot.cargo.id}
+                      onClick={() => useCargoItem(slot.cargo.id)}
+                      disabled={!isPlayerPhase || isReplaying}
+                      className={`
+                        flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors
+                        ${isPlayerPhase && !isReplaying
+                          ? 'bg-neon-yellow/10 text-neon-yellow border-neon-yellow/50 hover:bg-neon-yellow/20 cursor-pointer'
+                          : 'bg-space-700 text-gray-500 border-space-600 cursor-not-allowed'}
+                      `}
+                    >
+                      <span className="text-lg">{slot.cargo.icon}</span>
+                      <div className="text-left">
+                        <div className="text-xs font-display font-bold">{slot.cargo.name}</div>
+                        <div className="text-xs opacity-70">x{slot.quantity}</div>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
           
           {isPlayerPhase && !isReplaying && (
             <div className="flex justify-center gap-4">

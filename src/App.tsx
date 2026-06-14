@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { NavBar } from "@/components/UI/NavBar";
 import { BattlePage } from "@/pages/BattlePage";
 import { UpgradePage } from "@/pages/UpgradePage";
+import { CargoPage } from "@/pages/CargoPage";
 import { HistoryPage } from "@/pages/HistoryPage";
 import { ConfigPage } from "@/pages/ConfigPage";
 
@@ -14,6 +15,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<BattlePage />} />
             <Route path="/upgrade" element={<UpgradePage />} />
+            <Route path="/cargo" element={<CargoPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/config" element={<ConfigPage />} />
           </Routes>
