@@ -16,7 +16,7 @@ import {
   applyCargoEffectsToEnemy,
   getActiveCargoDamageBonus,
 } from '../utils/battle';
-import { createDefaultShipCargo, calculateCargoWeight, calculateWeightPenalty, calculateCargoRewardMultiplier } from '../data/cargo';
+import { createDefaultShipCargo, calculateCargoWeight, calculateWeightPenalty, calculateCargoRewardMultiplier, calculateCargoUsedCapacity } from '../data/cargo';
 import type { ShipCargo } from '../types';
 import { addBattleRecord, loadBattleHistory, updateStats } from '../utils/storage';
 import { unassignAllDice } from '../utils/dice';
@@ -137,6 +137,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       activeCargo,
       cargoWeightPenalty: evasionPenalty,
       cargoRewardMultiplier,
+      tempDamageBonus: 0,
+      lootCollected: 0,
     };
     
     const replayData: ReplayData = {
@@ -171,17 +173,31 @@ export const useGameStore = create<GameState>((set, get) => ({
       preparedEnemy.defense = preparedEnemy.defense + 0.2;
     }
     
+    let playerForAttack = { ...battleState.player };
+    if (battleState.tempDamageBonus > 0) {
+      playerForAttack = {
+        ...playerForAttack,
+        attack: Math.floor(playerForAttack.attack * (1 + battleState.tempDamageBonus)),
+      };
+    }
+    
     const playerResult = executePlayerActions(
       dice,
-      battleState.player,
+      playerForAttack,
       preparedEnemy,
       config
     );
     
+    const newPlayerAfterAttack = {
+      ...playerResult.newPlayer,
+      attack: battleState.player.attack,
+    };
+    
     let newState: BattleState = {
       ...battleState,
-      player: playerResult.newPlayer,
+      player: newPlayerAfterAttack,
       enemy: playerResult.newEnemy,
+      tempDamageBonus: 0,
       logs: [...battleState.logs, ...playerResult.logs.map(l => ({ ...l, turn: battleState.turn }))],
     };
     
@@ -369,16 +385,44 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     const shipStore = useShipStore.getState();
     
-    const reward = result === 'victory' 
+    const baseReward = result === 'victory' 
       ? calculateReward(result, battleState.turn, get().currentDifficulty, battleState.activeCargo)
       : 0;
+    
+    let finalReward = baseReward;
+    let lootDiscarded = 0;
+    
+    if (result === 'victory' && baseReward > 0) {
+      const { activeCargo } = battleState;
+      const usedCapacity = calculateCargoUsedCapacity(activeCargo);
+      const freeCapacity = Math.max(0, activeCargo.capacity - usedCapacity);
+      
+      const lootValuePerCapacity = 5;
+      const maxLootBySpace = freeCapacity * lootValuePerCapacity * get().currentDifficulty;
+      const multiplier = battleState.cargoRewardMultiplier || 1;
+      
+      const lootReward = Math.floor(baseReward * (multiplier - 1));
+      const bonusLoot = Math.min(lootReward, maxLootBySpace);
+      lootDiscarded = lootReward - bonusLoot;
+      
+      const baseLoot = Math.floor(baseReward - lootReward);
+      finalReward = baseLoot + bonusLoot;
+    }
+    
+    const currentShip = shipStore.ship;
+    const updatedShip = {
+      ...currentShip,
+      cargo: battleState.activeCargo,
+    };
+    shipStore.setShip(updatedShip);
     
     const newState: BattleState = {
       ...battleState,
       result,
       phase: 'ended',
       endTime: Date.now(),
-      rewardPoints: reward,
+      rewardPoints: finalReward,
+      lootCollected: finalReward,
     };
     
     const newRecord: BattleRecord = {
@@ -392,13 +436,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       playerHpRemaining: battleState.player.hp,
       enemyHpRemaining: battleState.enemy.hp,
       replayData: replayData || { initialState: newState, actions: [] },
-      rewardEarned: reward,
+      rewardEarned: finalReward,
     };
     
     addBattleRecord(newRecord);
     
-    if (reward > 0) {
-      shipStore.addRewardPoints(reward);
+    if (finalReward > 0) {
+      shipStore.addRewardPoints(finalReward);
     }
     
     const newStats = { ...shipStore.stats };
@@ -530,19 +574,19 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     
     let newPlayer = { ...battleState.player };
-    let newEnemy = { ...battleState.enemy };
     const newLogs: BattleLogEntry[] = [];
+    let newTempDamageBonus = battleState.tempDamageBonus;
     
     if (cargo.effect.damageBonus) {
+      newTempDamageBonus += cargo.effect.damageBonus;
       newLogs.push({
         id: `log_${Date.now()}_use_${cargoId}`,
         turn: battleState.turn,
         type: 'effect',
         source: 'player',
-        message: `使用 ${cargo.name}：下次攻击伤害 +${(cargo.effect.damageBonus * 100).toFixed(0)}%`,
+        message: `使用 ${cargo.name}：本回合攻击伤害 +${(cargo.effect.damageBonus * 100).toFixed(0)}%`,
         timestamp: Date.now(),
       });
-      newPlayer.attack = Math.floor(newPlayer.attack * (1 + cargo.effect.damageBonus));
     }
     
     if (cargo.effect.cooldownReduction) {
@@ -583,8 +627,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       battleState: {
         ...battleState,
         player: newPlayer,
-        enemy: newEnemy,
         activeCargo: newActiveCargo,
+        tempDamageBonus: newTempDamageBonus,
         logs: [...battleState.logs, ...newLogs],
       },
     });

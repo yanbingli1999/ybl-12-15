@@ -139,6 +139,8 @@ export interface BattleState {
   activeCargo: ShipCargo;
   cargoWeightPenalty: number;
   cargoRewardMultiplier: number;
+  tempDamageBonus: number;
+  lootCollected: number;
 }
 
 export interface GameConfig {

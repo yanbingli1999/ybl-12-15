@@ -11,6 +11,7 @@ import { useGameStore } from '../store/useGameStore';
 import { useDiceStore } from '../store/useDiceStore';
 import { useShipStore } from '../store/useShipStore';
 import { hasAnyDiceAssigned } from '../utils/dice';
+import { calculateReward } from '../utils/battle';
 import { calculateCargoWeight, calculateCargoUsedCapacity, calculateWeightPenalty, calculateCargoRewardMultiplier } from '../data/cargo';
 import type { Cargo } from '../types';
 
@@ -427,11 +428,39 @@ export const BattlePage: React.FC = () => {
           </p>
 
           {battleState.result === 'victory' && (
-            <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded-lg p-4 mb-6">
-              <div className="text-sm text-gray-400 mb-1">获得奖励</div>
-              <div className="text-3xl font-display font-bold text-neon-yellow">
-                +{battleState.rewardPoints} 💰
+            <div className="space-y-3 mb-6">
+              <div className="bg-neon-yellow/10 border border-neon-yellow/30 rounded-lg p-4">
+                <div className="text-sm text-gray-400 mb-1">获得奖励</div>
+                <div className="text-3xl font-display font-bold text-neon-yellow">
+                  +{battleState.rewardPoints} 💰
+                </div>
               </div>
+              {(() => {
+                const usedCapacity = calculateCargoUsedCapacity(battleState.activeCargo);
+                const freeCapacity = Math.max(0, battleState.activeCargo.capacity - usedCapacity);
+                const baseReward = calculateReward('victory', battleState.turn, currentDifficulty);
+                const multiplier = battleState.cargoRewardMultiplier || 1;
+                const lootReward = Math.floor(baseReward * (multiplier - 1));
+                const lootValuePerCapacity = 5;
+                const maxLootBySpace = freeCapacity * lootValuePerCapacity * currentDifficulty;
+                const bonusLoot = Math.min(lootReward, maxLootBySpace);
+                const lootDiscarded = lootReward - bonusLoot;
+                
+                if (lootDiscarded > 0) {
+                  return (
+                    <div className="bg-neon-red/10 border border-neon-red/30 rounded-lg p-3">
+                      <div className="text-sm text-gray-400 mb-1">战利品丢弃</div>
+                      <div className="text-lg font-display font-bold text-neon-red">
+                        -{lootDiscarded} 💰 (货舱空间不足)
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        剩余空间: {freeCapacity} 容量 | 战利品货柜加成: x{multiplier.toFixed(2)}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
           )}
 
